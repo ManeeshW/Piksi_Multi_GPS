@@ -5,6 +5,7 @@
 #include <cstdlib> // for setenv
 #include <iomanip>
 #include <sstream>
+#include <fstream>
 
 namespace piksi {
 
@@ -20,8 +21,14 @@ static sbp_msg_callbacks_node_t vel_ned_node;
 static sbp_msg_callbacks_node_t baseline_node;
 static sbp_msg_callbacks_node_t heartbeat_node;
 
-PiksiMultiGPS::PiksiMultiGPS(const std::string& port, int baud_rate)
-    : port_(port), baud_rate_(baud_rate), serial_port_name_(nullptr) {
+PiksiMultiGPS::PiksiMultiGPS(const std::string& config_file_path)
+    : serial_port_name_(nullptr) {
+    // Set default values
+    port_ = "/dev/cu.usbserial-AL00KUE3";
+    baud_rate_ = 115200;
+
+    read_config(config_file_path);
+
     data_.rtk_solution = false;
     data_.frequency = 0.0;
     data_.utc_timestamp = -1.0;
@@ -30,6 +37,57 @@ PiksiMultiGPS::PiksiMultiGPS(const std::string& port, int baud_rate)
 
 PiksiMultiGPS::~PiksiMultiGPS() {
     close();
+}
+
+void PiksiMultiGPS::read_config(const std::string& config_file_path) {
+    std::ifstream config_file(config_file_path);
+    if (!config_file.is_open()) {
+        std::cerr << "GPS: Warning - Failed to open config file. Using default settings." << std::endl;
+        return;
+    }
+
+    std::string line;
+    bool in_piksi_section = false;
+    while (std::getline(config_file, line)) {
+        // Trim whitespace from the line
+        line.erase(0, line.find_first_not_of(" \t"));
+        line.erase(line.find_last_not_of(" \t") + 1);
+
+        // Check for section header
+        if (line.length() > 0 && line.front() == '[' && line.back() == ']') {
+            std::string section = line.substr(1, line.length() - 2);
+            in_piksi_section = (section == "Piksi Multi GPS");
+            continue;
+        }
+
+        if (!in_piksi_section || line.empty() || line[0] == '#') {
+            continue;
+        }
+
+        std::istringstream is_line(line);
+        std::string key;
+        if (std::getline(is_line, key, '=')) {
+            std::string value;
+            if (std::getline(is_line, value)) {
+                // Trim whitespace from key and value
+                key.erase(0, key.find_first_not_of(" \t"));
+                key.erase(key.find_last_not_of(" \t") + 1);
+                value.erase(0, value.find_first_not_of(" \t"));
+                value.erase(value.find_last_not_of(" \t") + 1);
+                
+                if (key == "port") {
+                    port_ = value;
+                } else if (key == "baud_rate") {
+                    try {
+                        baud_rate_ = std::stoi(value);
+                    } catch (const std::invalid_argument& ia) {
+                        std::cerr << "GPS: Warning - Invalid baud_rate in config. Using default." << std::endl;
+                    }
+                }
+            }
+        }
+    }
+    config_file.close();
 }
 
 void PiksiMultiGPS::open() {

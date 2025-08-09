@@ -34,7 +34,7 @@ struct PiksiData {
 
 class PiksiMultiGPS {
 public:
-    PiksiMultiGPS(const std::string& port = "/dev/cu.usbserial-AL00KUE3", int baud_rate = 115200);
+    PiksiMultiGPS(const std::string& config_file_path = "../config.cfg");
     ~PiksiMultiGPS();
 
     void open();
@@ -62,6 +62,7 @@ private:
     bool has_new_data_ = false;
 
     void setup_port(int baud);
+    void read_config(const std::string& config_file_path);
     static s32 piksi_port_read(u8 *buff, u32 n, void *context);
     static s32 piksi_port_write(u8 *buff, u32 n, void *context);
 

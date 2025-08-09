@@ -56,7 +56,7 @@ void print_gps_data(const piksi::PiksiMultiGPS& gps) {
 }
 
 int main() {
-    piksi::PiksiMultiGPS gps("/dev/cu.usbserial-AL00KUE3", 115200);
+    piksi::PiksiMultiGPS gps("../config.cfg");
 
     std::cout << "GPS: Initializing..." << std::endl;
     gps.open();
