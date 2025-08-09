@@ -21,7 +21,7 @@ static sbp_msg_callbacks_node_t baseline_node;
 static sbp_msg_callbacks_node_t heartbeat_node;
 
 PiksiMultiGPS::PiksiMultiGPS(const std::string& port, int baud_rate)
-    : port_(port), baud_rate_(baud_rate), serial_port_name_(nullptr) { // Removed piksi_port_(nullptr)
+    : port_(port), baud_rate_(baud_rate), serial_port_name_(nullptr) {
     data_.rtk_solution = false;
     data_.frequency = 0.0;
     data_.utc_timestamp = -1.0;
@@ -126,7 +126,6 @@ void PiksiMultiGPS::init_loop() {
     sbp_register_callback(&s_, SBP_MSG_HEARTBEAT, &heartbeat_callback, this, &heartbeat_node);
 
     std::cout << "\nGPS: Waiting for the first heartbeat..." << std::endl;
-    // Keep trying to process messages without a sleep_for.
     while (!flag_start_) {
         sbp_process(&s0_, &piksi_port_read);
     }
@@ -233,58 +232,9 @@ void PiksiMultiGPS::pos_llh_callback(u16 sender_id, u8 len, u8 msg[], void *cont
         }
     }
     gps->last_update_ = now;
-
-    // Printing logic moved here to print at update rate
-    static double last_utc_timestamp = -1.0;
-    if (gps->data_.utc_timestamp == last_utc_timestamp) {
-        return; // Skip print if no new data
-    }
-    last_utc_timestamp = gps->data_.utc_timestamp;
-
-    // Determine status string and color based on fix mode (lower 3 bits of status)
-    std::string status_str;
-    std::string color;
-    int fix_mode = gps->data_.status & 0x07;
-    switch (fix_mode) {
-        case 1: status_str = "SPP"; color = "\033[31m"; break; // Red
-        case 6: status_str = "SBAS"; color = "\033[35m"; break; // Purple
-        case 2: status_str = "DGPS"; color = "\033[36m"; break; // Cyan
-        case 3: status_str = "RTK Float"; color = "\033[34m"; break; // Blue
-        case 4: status_str = "RTK Fixed"; color = "\033[32m"; break; // Green
-        case 5: status_str = "DR"; color = "\033[37m"; break; // White
-        default: status_str = "Unknown/Invalid"; color = "\033[31m"; break; // Red for invalid
-    }
-
-    // Calculate latency
-    std::string latency_str;
-    if (gps->data_.utc_timestamp >= 0.0) {
-        double now_time = static_cast<double>(std::time(nullptr));
-        double latency = now_time - gps->data_.utc_timestamp;
-        std::ostringstream oss;
-        oss << std::setprecision(3) << latency << " seconds";
-        latency_str = oss.str();
-    } else {
-        latency_str = "N/A";
-    }
-
-    std::cout << "\n=== GPS Data ===" << std::endl;
-    std::cout << "UTC Time: " << std::setprecision(2) << gps->data_.utc << " (" 
-              << static_cast<int>(gps->data_.hr) << ":" 
-              << static_cast<int>(gps->data_.min) << ":" 
-              << static_cast<int>(gps->data_.sec) << "." << gps->data_.ms << ")" << std::endl;
-    std::cout << "LLH: Lat=" << std::setprecision(9) << gps->data_.lat << " deg, Lon=" << gps->data_.lon 
-              << " deg, Height=" << gps->data_.h << " m" << std::endl;
-    std::cout << "LLH Accuracy: Horizontal=" << gps->data_.S_llh_h << " m, Vertical=" << gps->data_.S_llh_v << " m" << std::endl;
-    std::cout << "ECEF: X=" << gps->data_.ecef_x << " m, Y=" << gps->data_.ecef_y << " m, Z=" << gps->data_.ecef_z << " m" << std::endl;
-    std::cout << "ECEF Accuracy: " << gps->data_.S_ecef << " m" << std::endl;
-    std::cout << "Baseline NED: N=" << gps->data_.n << " m, E=" << gps->data_.e << " m, D=" << gps->data_.d << " m" << std::endl;
-    std::cout << "RTK Accuracy: Horizontal=" << gps->data_.S_rtk_x_h << " m, Vertical=" << gps->data_.S_rtk_x_v << " m" << std::endl;
-    std::cout << "Velocity NED: N=" << gps->data_.v_n << " m/s, E=" << gps->data_.v_e << " m/s, D=" << gps->data_.v_d << " m/s" << std::endl;
-    std::cout << "Velocity Accuracy: Horizontal=" << gps->data_.S_rtk_v_h << " m/s, Vertical=" << gps->data_.S_rtk_v_v << " m/s" << std::endl;
-    std::cout << "Satellites: " << gps->data_.sats << std::endl;
-    std::cout << color << "Status: " << status_str << (gps->data_.rtk_solution ? " (RTK Solution)" : "") << "\033[0m" << std::endl;
-    std::cout << "Update Frequency: " << std::setprecision(2) << gps->data_.frequency << " Hz" << std::endl;
-    std::cout << "Data Transmission Latency: " << latency_str << std::endl;
+    
+    // Set the flag to indicate new data is available
+    gps->has_new_data_ = true;
 }
 
 void PiksiMultiGPS::pos_ecef_callback(u16 sender_id, u8 len, u8 msg[], void *context) {
