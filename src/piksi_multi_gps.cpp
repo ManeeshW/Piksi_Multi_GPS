@@ -1,0 +1,223 @@
+#include "piksi_multi_gps.hpp"
+#include <thread>
+#include <iostream>
+
+namespace piksi {
+
+static struct sp_port *piksi_port;
+int PiksiMultiGPS::loop_count_ = 0;
+bool PiksiMultiGPS::flag_start_ = false;
+
+static sbp_msg_callbacks_node_t heartbeat_node_0;
+static sbp_msg_callbacks_node_t gps_time_node;
+static sbp_msg_callbacks_node_t pos_llh_node;
+static sbp_msg_callbacks_node_t pos_ecef_node;
+static sbp_msg_callbacks_node_t vel_ned_node;
+static sbp_msg_callbacks_node_t baseline_node;
+static sbp_msg_callbacks_node_t heartbeat_node;
+
+PiksiMultiGPS::PiksiMultiGPS(const std::string& port, int baud_rate)
+    : port_(port), baud_rate_(baud_rate), serial_port_name_(nullptr) { // Removed piksi_port_(nullptr)
+    data_.rtk_solution = false;
+}
+
+PiksiMultiGPS::~PiksiMultiGPS() {
+    close();
+}
+
+void PiksiMultiGPS::open() {
+    serial_port_name_ = port_.c_str();
+    std::cout << "GPS: Attempting to open " << serial_port_name_ << " with baud rate " << baud_rate_ << " .." << std::endl;
+
+    if (!serial_port_name_) {
+        std::cerr << "GPS: Check the serial port path of the Piksi!" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    int result = sp_get_port_by_name(serial_port_name_, &piksi_port);
+    if (result != SP_OK) {
+        std::cerr << "GPS: Cannot find provided serial port!" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    result = sp_open(piksi_port, SP_MODE_READ);
+    if (result != SP_OK) {
+        std::cerr << "GPS: Cannot open " << serial_port_name_ << " for reading!" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    std::cout << "GPS: Port is open" << std::endl;
+
+    setup_port(baud_rate_);
+}
+
+void PiksiMultiGPS::setup_port(int baud) {
+    std::cout << "GPS: Attempting to configure the serial port..." << std::endl;
+    int result;
+
+    result = sp_set_baudrate(piksi_port, baud);
+    if (result != SP_OK) {
+        std::cerr << "GPS: Cannot set port baud rate!" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    result = sp_set_flowcontrol(piksi_port, SP_FLOWCONTROL_NONE);
+    if (result != SP_OK) {
+        std::cerr << "GPS: Cannot set flow control!" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    result = sp_set_bits(piksi_port, 8);
+    if (result != SP_OK) {
+        std::cerr << "GPS: Cannot set data bits!" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    result = sp_set_parity(piksi_port, SP_PARITY_NONE);
+    if (result != SP_OK) {
+        std::cerr << "GPS: Cannot set parity!" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    result = sp_set_stopbits(piksi_port, 1);
+    if (result != SP_OK) {
+        std::cerr << "GPS: Cannot set stop bits!" << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    std::cout << "GPS: Configuring serial port completed." << std::endl;
+}
+
+void PiksiMultiGPS::init_loop() {
+    sbp_state_init(&s0_);
+    sbp_register_callback(&s0_, SBP_MSG_HEARTBEAT, &heartbeat_callback_0, NULL, &heartbeat_node_0);
+
+    sbp_state_init(&s_);
+    sbp_state_set_io_context(&s_, this);
+    sbp_register_callback(&s_, SBP_MSG_UTC_TIME, &gps_time_callback, this, &gps_time_node);
+    sbp_register_callback(&s_, SBP_MSG_POS_ECEF, &pos_ecef_callback, this, &pos_ecef_node);
+    sbp_register_callback(&s_, SBP_MSG_POS_LLH, &pos_llh_callback, this, &pos_llh_node);
+    sbp_register_callback(&s_, SBP_MSG_VEL_NED, &vel_ned_callback, this, &vel_ned_node);
+    sbp_register_callback(&s_, SBP_MSG_BASELINE_NED, &baseline_callback, this, &baseline_node);
+    sbp_register_callback(&s_, SBP_MSG_HEARTBEAT, &heartbeat_callback, this, &heartbeat_node);
+
+    std::cout << "\nGPS: Waiting for the first heartbeat..." << std::endl;
+    // Keep trying to process messages without a sleep_for.
+    while (!flag_start_) {
+        sbp_process(&s0_, &piksi_port_read);
+    }
+    std::cout << "GPS: Starting the main loop..." << std::endl;
+}
+
+void PiksiMultiGPS::loop() {
+    int ret = sbp_process(&s_, &piksi_port_read);
+    if (ret < 0) {
+        std::cout << "GPS: sbp_process error: " << ret << std::endl;
+    }
+}
+
+void PiksiMultiGPS::close() {
+    if (piksi_port) {
+        int result = sp_close(piksi_port);
+        if (result != SP_OK) {
+            std::cerr << "GPS: Cannot close " << serial_port_name_ << " properly!" << std::endl;
+        } else {
+            std::cout << "GPS: Serial at " << serial_port_name_ << " port closed." << std::endl;
+        }
+        sp_free_port(piksi_port);
+        piksi_port = nullptr;
+    }
+}
+
+s32 PiksiMultiGPS::piksi_port_read(u8 *buff, u32 n, void *context) {
+    (void)context;
+    s32 result;
+    // Use a non-blocking read to process whatever data is available.
+    // The flight code uses a 0 timeout.
+    result = sp_blocking_read(piksi_port, buff, n, 0);
+    if (result < 0) {
+        return SBP_READ_ERROR;
+    }
+    return static_cast<s32>(result);
+}
+
+void PiksiMultiGPS::heartbeat_callback_0(u16 sender_id, u8 len, u8 msg[], void *context) {
+    (void)sender_id, (void)len, (void)msg, (void)context;
+    std::cout << "GPS: first heartbeat detected" << std::endl;
+    flag_start_ = true;
+}
+
+void PiksiMultiGPS::heartbeat_callback(u16 sender_id, u8 len, u8 msg[], void *context) {
+    (void)sender_id, (void)len, (void)msg, (void)context;
+}
+
+void PiksiMultiGPS::baseline_callback(u16 sender_id, u8 len, u8 msg[], void *context) {
+    (void)sender_id, (void)len, (void)context;
+    msg_baseline_ned_t baseline = *(msg_baseline_ned_t *)msg;
+    PiksiMultiGPS* gps = static_cast<PiksiMultiGPS*>(context);
+    gps->data_.n = static_cast<float>(baseline.n) / 1.0e3;
+    gps->data_.e = static_cast<float>(baseline.e) / 1.0e3;
+    gps->data_.d = static_cast<float>(baseline.d) / 1.0e3;
+
+    if (baseline.flags == 0) {
+        gps->data_.rtk_solution = false;
+        return;
+    }
+
+    gps->loop_count_ = 0;
+    gps->data_.rtk_solution = true;
+    gps->data_.status = static_cast<int>(baseline.flags);
+    gps->data_.S_rtk_x_h = static_cast<float>(baseline.h_accuracy) / 1.0e3;
+    gps->data_.S_rtk_x_v = static_cast<float>(baseline.v_accuracy) / 1.0e3;
+}
+
+void PiksiMultiGPS::pos_llh_callback(u16 sender_id, u8 len, u8 msg[], void *context) {
+    (void)sender_id, (void)len, (void)context;
+    msg_pos_llh_t pos_llh = *(msg_pos_llh_t *)msg;
+    PiksiMultiGPS* gps = static_cast<PiksiMultiGPS*>(context);
+    gps->data_.lat = pos_llh.lat;
+    gps->data_.lon = pos_llh.lon;
+    gps->data_.h = pos_llh.height;
+    gps->data_.S_llh_h = static_cast<float>(pos_llh.h_accuracy) / 1.0e3;
+    gps->data_.S_llh_v = static_cast<float>(pos_llh.v_accuracy) / 1.0e3;
+    gps->data_.sats = static_cast<int>(pos_llh.n_sats);
+    gps->loop_count_++;
+    if (gps->loop_count_ > 3) {
+        gps->data_.rtk_solution = false;
+    }
+    if (!gps->data_.rtk_solution) {
+        gps->data_.status = static_cast<int>(pos_llh.flags);
+    }
+}
+
+void PiksiMultiGPS::pos_ecef_callback(u16 sender_id, u8 len, u8 msg[], void *context) {
+    (void)sender_id, (void)len, (void)context;
+    msg_pos_ecef_t pos_ecef = *(msg_pos_ecef_t *)msg;
+    PiksiMultiGPS* gps = static_cast<PiksiMultiGPS*>(context);
+    gps->data_.ecef_x = pos_ecef.x;
+    gps->data_.ecef_y = pos_ecef.y;
+    gps->data_.ecef_z = pos_ecef.z;
+    gps->data_.S_ecef = static_cast<float>(pos_ecef.accuracy) / 1.0e3;
+}
+
+void PiksiMultiGPS::vel_ned_callback(u16 sender_id, u8 len, u8 msg[], void *context) {
+    (void)sender_id, (void)len, (void)context;
+    msg_vel_ned_t vel_ned = *(msg_vel_ned_t *)msg;
+    PiksiMultiGPS* gps = static_cast<PiksiMultiGPS*>(context);
+    gps->data_.v_n = static_cast<float>(vel_ned.n) / 1.0e3;
+    gps->data_.v_e = static_cast<float>(vel_ned.e) / 1.0e3;
+    gps->data_.v_d = static_cast<float>(vel_ned.d) / 1.0e3;
+    gps->data_.S_rtk_v_h = static_cast<float>(vel_ned.h_accuracy) / 1.0e3;
+    gps->data_.S_rtk_v_v = static_cast<float>(vel_ned.v_accuracy) / 1.0e3;
+}
+
+void PiksiMultiGPS::gps_time_callback(u16 sender_id, u8 len, u8 msg[], void *context) {
+    (void)sender_id, (void)len, (void)context;
+    msg_utc_time_t gps_time = *(msg_utc_time_t *)msg;
+    PiksiMultiGPS* gps = static_cast<PiksiMultiGPS*>(context);
+    gps->data_.hr = gps_time.hours;
+    gps->data_.min = gps_time.minutes;
+    gps->data_.sec = gps_time.seconds;
+    gps->data_.ms = gps_time.ns / 1.0e6;
+    gps->data_.utc = gps->data_.hr + gps->data_.min / 60.0 + (gps->data_.sec + gps->data_.ms / 1000.0) / 3600.0;
+}
+
+} // namespace piksi

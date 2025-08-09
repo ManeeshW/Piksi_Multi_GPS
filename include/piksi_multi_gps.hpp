@@ -1,0 +1,67 @@
+#ifndef PIKSI_MULTI_GPS_HPP
+#define PIKSI_MULTI_GPS_HPP
+
+#include <libserialport.h>
+#include <libsbp/sbp.h>
+#include <libsbp/system.h>
+#include <libsbp/navigation.h>
+#include <string>
+#include <iostream>
+
+namespace piksi {
+
+struct PiksiData {
+    double lat, lon, h;              // Latitude, longitude, height (LLH)
+    float S_llh_h, S_llh_v;          // LLH horizontal/vertical accuracy (m)
+    double ecef_x, ecef_y, ecef_z;   // ECEF position (m)
+    float S_ecef;                    // ECEF accuracy (m)
+    double n, e, d;                  // Baseline NED (m)
+    float S_rtk_x_h, S_rtk_x_v;      // RTK horizontal/vertical accuracy (m)
+    double v_n, v_e, v_d;            // Velocity NED (m/s)
+    float S_rtk_v_h, S_rtk_v_v;      // Velocity horizontal/vertical accuracy (m/s)
+    u8 hr, min, sec;                 // UTC time
+    double ms;                       // UTC milliseconds
+    float utc;                       // UTC time in hours (hr + min/60 + sec/3600)
+    int sats;                        // Number of satellites
+    int status;                      // GPS status
+    bool rtk_solution;               // RTK solution availability
+};
+
+class PiksiMultiGPS {
+public:
+    PiksiMultiGPS(const std::string& port = "/dev/cu.usbserial-AL00KUE3", int baud_rate = 115200);
+    ~PiksiMultiGPS();
+
+    void open();
+    void init_loop();
+    void loop();
+    void close();
+    const PiksiData& get_data() const { return data_; }
+
+private:
+    std::string port_;
+    int baud_rate_;
+    const char* serial_port_name_;
+    sbp_state_t s_;
+    sbp_state_t s0_;
+    PiksiData data_;
+    static int loop_count_;
+    static bool flag_start_;
+
+    void setup_port(int baud);
+    // Use a global port pointer and no context in the signature
+    static s32 piksi_port_read(u8 *buff, u32 n, void *context);
+
+    // Callback functions for SBP messages
+    static void heartbeat_callback_0(u16 sender_id, u8 len, u8 msg[], void *context);
+    static void heartbeat_callback(u16 sender_id, u8 len, u8 msg[], void *context);
+    static void baseline_callback(u16 sender_id, u8 len, u8 msg[], void *context);
+    static void pos_llh_callback(u16 sender_id, u8 len, u8 msg[], void *context);
+    static void pos_ecef_callback(u16 sender_id, u8 len, u8 msg[], void *context);
+    static void vel_ned_callback(u16 sender_id, u8 len, u8 msg[], void *context);
+    static void gps_time_callback(u16 sender_id, u8 len, u8 msg[], void *context);
+};
+
+} // namespace piksi
+
+#endif

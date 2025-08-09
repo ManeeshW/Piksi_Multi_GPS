@@ -1,0 +1,101 @@
+# Copyright (C) 2016 Swift Navigation Inc.
+# Contact: Dennis Zollo <dzollo@swiftnav.com>
+#
+# This source is subject to the license found in the file 'LICENSE' which must
+# be be distributed together with this source. All other rights reserved.
+#
+# THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND,
+# EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR PURPOSE.
+
+package: swiftnav.sbp.vehicle
+description: Messages from a vehicle.
+stable: False
+public: True
+definitions:
+
+ - MSG_ODOMETRY:
+    id: 0x0903
+    short_desc: Vehicle forward (x-axis) velocity
+    desc: |
+      Message representing the x component of vehicle velocity in the user frame at the odometry
+      reference point(s) specified by the user. The offset for the odometry reference point and 
+      the definition and origin of the user frame are defined through the device settings interface.
+      There are 4 possible user-defined sources of this message  which are labeled arbitrarily 
+      source 0 through 3.
+    fields:
+        - tow:
+            type: u32
+            units: ms
+            desc: |
+             Time field representing either milliseconds in the GPS Week or local CPU
+             time from the producing system in milliseconds.  See the tow_source flag
+             for the exact source of this timestamp.
+        - velocity:
+           type: s32
+           units: mm/s
+           desc: |
+             The signed forward component of vehicle velocity.
+        - flags:
+            type: u8
+            desc: Status flags
+            fields:
+                  - 5-7:
+                      desc: Reserved
+                  - 3-4:
+                      desc: Velocity Source
+                      values:
+                          - 0: Source 0
+                          - 1: Source 1
+                          - 2: Source 2
+                          - 3: Source 3
+                  - 0-2:
+                      desc: Time source
+                      values:
+                          - 0: None (invalid)
+                          - 1: GPS Solution (ms in week)
+                          - 2: Processor Time
+
+ - MSG_WHEELTICK:
+    id: 0x0904
+    short_desc: Accumulated wheeltick count message
+    desc: |
+      Message containing the accumulated distance travelled by a wheel located at an odometry
+      reference point defined by the user. The offset for the odometry reference point and the
+      definition and origin of the user frame are defined through the device settings interface.
+      The source of this message is identified by the source field, which is an integer ranging
+      from 0 to 255.
+      The timestamp associated with this message should represent the time when the accumulated
+      tick count reached the value given by the contents of this message as accurately as possible.
+    fields:
+        - time:
+            type: u64
+            units: us
+            desc: |
+             Time field representing either microseconds since the last PPS, microseconds in the GPS
+             Week or local CPU time from the producing system in microseconds. See the synch_type
+             field for the exact meaning of this timestamp.
+        - flags:
+            type: u8
+            desc: |
+              Field indicating the type of timestamp contained in the time field.
+            fields:
+                  - 2-7:
+                      desc: Reserved
+                  - 0-1:
+                      desc: Synchronization type
+                      values:
+                          - 0: microseconds since last PPS
+                          - 1: microseconds in GPS week
+                          - 2: local CPU time in nominal microseconds
+        - source:
+            type: u8
+            desc: |
+              ID of the sensor producing this message
+        - ticks:
+            type: s32
+            units: arbitrary distance units
+            desc: |
+              Free-running counter of the accumulated distance for this sensor. The counter should be
+              incrementing if travelling into one direction and decrementing when travelling in the
+              opposite direction.

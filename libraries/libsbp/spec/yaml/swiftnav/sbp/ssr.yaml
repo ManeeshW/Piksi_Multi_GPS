@@ -1,0 +1,540 @@
+# Copyright (C) 2018 Swift Navigation Inc.
+# Contact: Swift Navigation <dev@swiftnav.com>
+#
+# This source is subject to the license found in the file 'LICENSE' which must
+# be be distributed together with this source. All other rights reserved.
+#
+# THIS CODE AND INFORMATION IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND,
+# EITHER EXPRESSED OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND/OR FITNESS FOR A PARTICULAR PURPOSE.
+
+package: swiftnav.sbp.ssr
+description: Precise State Space Representation (SSR) corrections format
+stable: False
+public: True
+include:
+  - types.yaml
+  - gnss.yaml
+definitions:
+ - CodeBiasesContent:
+     short_desc: SSR code biases corrections for a particular satellite.
+     desc: |
+      Code biases are to be added to pseudorange.
+      The corrections conform with typical RTCMv3 MT1059 and 1065.
+     fields:
+     - code:
+            type: u8
+            desc: Signal constellation, band and code
+     - value:
+            type: s16
+            units: 0.01 m
+            desc: Code bias value
+ - PhaseBiasesContent:
+     short_desc: SSR phase biases corrections for a particular satellite.
+     desc: |
+      Phase biases are to be added to carrier phase measurements.
+      The corrections conform with typical RTCMv3 MT1059 and 1065.
+     fields:
+     - code:
+            type: u8
+            desc: Signal constellation, band and code
+     - integer_indicator:
+            type: u8
+            desc: Indicator for integer property
+     - widelane_integer_indicator:
+            type: u8
+            desc: Indicator for two groups of Wide-Lane(s) integer property
+     - discontinuity_counter:
+            type: u8
+            desc: |
+              Signal phase discontinuity counter.
+              Increased for every discontinuity in phase.
+     - bias:
+            type: s32
+            units: 0.1 mm
+            desc: Phase bias for specified signal
+
+ - STECHeader:
+    short_desc: Header for MSG_SSR_STEC_CORRECTION message
+    desc: |
+      A full set of STEC information will likely span multiple SBP
+      messages, since SBP message a limited to 255 bytes.  The header
+      is used to tie multiple SBP messages into a sequence.
+    fields:
+    - time:
+        type: GPSTimeSec
+        desc: GNSS reference time of the correction
+    - num_msgs:
+        type: u8
+        desc: Number of messages in the dataset
+    - seq_num:
+        type: u8
+        desc: Position of this message in the dataset
+    - update_interval:
+        type: u8
+        desc: |
+            Update interval between consecutive corrections. Encoded
+            following RTCM DF391 specification.
+    - iod_atmo:
+        type: u8
+        desc: |
+            IOD of the SSR atmospheric correction
+
+ - GriddedCorrectionHeader:
+    short_desc: Header for MSG_SSR_GRIDDED_CORRECTION
+    desc: |
+      The 3GPP message contains nested variable length arrays
+      which are not suppported in SBP, so each grid point will
+      be identified by the index.
+    fields:
+    - time:
+        type: GPSTimeSec
+        desc: GNSS reference time of the correction
+    - num_msgs:
+        type: u16
+        desc: Number of messages in the dataset
+    - seq_num:
+        type: u16
+        desc: Position of this message in the dataset
+    - update_interval:
+        type: u8
+        desc: |
+            Update interval between consecutive corrections. Encoded
+            following RTCM DF391 specification.
+    - iod_atmo:
+        type: u8
+        desc: |
+            IOD of the SSR atmospheric correction
+    - tropo_quality_indicator:
+        type: u8
+        desc: |
+          Quality of the troposphere data. Encoded following RTCM DF389
+          specifcation in units of m.
+
+ - STECSatElement:
+    desc: STEC polynomial for the given satellite.
+    fields:
+    - sv_id:
+        type: SvId
+        desc: Unique space vehicle identifier
+    - stec_quality_indicator:
+        type: u8
+        desc: |
+          Quality of the STEC data. Encoded following RTCM DF389 specifcation
+          but in units of TECU instead of m.
+    - stec_coeff:
+        type: array
+        size: 4
+        fill: s16
+        units: C00 = 0.05 TECU, others = 0.02 TECU/deg
+        desc: |
+          Coefficents of the STEC polynomial in the order of C00, C01, C10, C11
+
+ - TroposphericDelayCorrectionNoStd:
+    desc: |
+      Troposphere vertical delays at the grid point.
+    fields:
+    - hydro:
+        type: s16
+        units: 4 mm (add 2.3 m to get actual vertical hydro delay)
+        desc: Hydrostatic vertical delay
+    - wet:
+        type: s8
+        units: 4 mm (add 0.252 m to get actual vertical wet delay)
+        desc: Wet vertical delay
+
+ - TroposphericDelayCorrection:
+    desc: |
+      Troposphere vertical delays (mean and standard deviation) at the grid
+      point.
+    fields:
+    - hydro:
+        type: s16
+        units: 4 mm (add 2.3 m to get actual vertical hydro delay)
+        desc: Hydrostatic vertical delay
+    - wet:
+        type: s8
+        units: 4 mm (add 0.252 m to get actual vertical wet delay)
+        desc: Wet vertical delay
+    - stddev:
+        type: u8
+        units: |
+          modified DF389 scale; class is upper 3 bits, value is lower 5
+          stddev <= (3^class * (1 + value/16) - 1) mm
+        desc: stddev
+
+ - STECResidualNoStd:
+    desc: STEC residual for the given satellite at the grid point.
+    fields:
+    - sv_id:
+        type: SvId
+        desc: space vehicle identifier
+    - residual:
+        type: s16
+        units: 0.04 TECU
+        desc: STEC residual
+
+ - STECResidual:
+    desc: |
+      STEC residual (mean and standard deviation) for the given satellite
+      at the grid point,
+    fields:
+    - sv_id:
+        type: SvId
+        desc: space vehicle identifier
+    - residual:
+        type: s16
+        units: 0.04 TECU
+        desc: STEC residual
+    - stddev:
+        type: u8
+        units: |
+          modified DF389 scale; class is upper 3 bits, value is lower 5
+          stddev <= (3^class * (1 + value/16) - 1) * 10 TECU
+        desc: stddev
+
+ - GridElementNoStd:
+    short_desc: Correction data for a single grid point.
+    desc: |
+      Contains one tropo delay, plus STEC residuals for each satellite at the
+      grid point.
+    fields:
+    - index:
+        type: u16
+        desc: Index of the grid point
+    - tropo_delay_correction:
+        type: TroposphericDelayCorrectionNoStd
+        desc: Wet and hydrostatic vertical delays
+    - stec_residuals:
+        type: array
+        fill: STECResidualNoStd
+        desc: STEC residuals for each satellite
+
+ - GridElement:
+    short_desc: Correction data for a single grid point.
+    desc: |
+      Contains one tropo delay (mean and stddev), plus STEC residuals (mean and
+      stddev) for each satellite at the grid point.
+    fields:
+    - index:
+        type: u16
+        desc: Index of the grid point
+    - tropo_delay_correction:
+        type: TroposphericDelayCorrection
+        desc: Wet and hydrostatic vertical delays (mean, stddev)
+    - stec_residuals:
+        type: array
+        fill: STECResidual
+        desc: STEC residuals for each satellite (mean, stddev)
+
+ - GridDefinitionHeader:
+    short_desc: Defines the grid for MSG_SSR_GRIDDED_CORRECTION messages.
+    desc: |
+      Defines the grid for MSG_SSR_GRIDDED_CORRECTION messages.
+      Also includes an RLE encoded validity list.
+    fields:
+    - region_size_inverse:
+        type: u8
+        units: inverse degrees
+        desc: |
+          region_size (deg) = 10 / region_size_inverse
+          0 is an invalid value.
+    - area_width:
+        type: u16
+        desc: |
+          grid height (deg) = grid idth (deg) = area_width / region_size
+          0 is an invalid value.
+    - lat_nw_corner_enc:
+        type: u16
+        desc: North-West corner latitdue (deg) = region_size * lat_nw_corner_enc - 90
+    - lon_nw_corner_enc:
+        type: u16
+        desc: North-West corner longtitude (deg) = region_size * lon_nw_corner_enc - 180
+    - num_msgs:
+        type: u8
+        desc: Number of messages in the dataset
+    - seq_num:
+        type: u8
+        desc: Postion of this message in the dataset
+
+ - MSG_SSR_ORBIT_CLOCK:
+    id: 0x05DD
+    short_desc: Precise orbit and clock correction
+    desc: |
+      The precise orbit and clock correction message is
+      to be applied as a delta correction to broadcast
+      ephemeris and is typically an equivalent to the 1060
+      and 1066 RTCM message types
+    fields:
+        - time:
+            type: GPSTimeSec
+            desc: GNSS reference time of the correction
+        - sid:
+            type: GnssSignal
+            desc: GNSS signal identifier (16 bit)
+        - update_interval:
+            type: u8
+            desc: |
+                Update interval between consecutive corrections. Encoded
+                following RTCM DF391 specification.
+        - iod_ssr:
+            type: u8
+            desc: |
+                IOD of the SSR correction. A change of Issue Of Data
+                SSR is used to indicate a change in the SSR
+                generating configuration
+        - iod:
+            type: u32
+            desc: Issue of broadcast ephemeris data or IODCRC (Beidou)
+        - radial:
+            type: s32
+            units: 0.1 mm
+            desc: Orbit radial delta correction
+        - along:
+            type: s32
+            units: 0.4 mm
+            desc: Orbit along delta correction
+        - cross:
+            type: s32
+            units: 0.4 mm
+            desc: Orbit along delta correction
+        - dot_radial:
+            type: s32
+            units: 0.001 mm/s
+            desc: Velocity of orbit radial delta correction
+        - dot_along:
+            type: s32
+            units: 0.004 mm/s
+            desc: Velocity of orbit along delta correction
+        - dot_cross:
+            type: s32
+            units: 0.004 mm/s
+            desc: Velocity of orbit cross delta correction
+        - c0:
+            type: s32
+            units: 0.1 mm
+            desc: C0 polynomial coefficient for correction of broadcast satellite clock
+        - c1:
+            type: s32
+            units: 0.001 mm/s
+            desc: C1 polynomial coefficient for correction of broadcast satellite clock
+        - c2:
+            type: s32
+            units: 0.00002 mm/s^-2
+            desc: C2 polynomial coefficient for correction of broadcast satellite clock
+
+ - MSG_SSR_ORBIT_CLOCK_DEP_A:
+    id: 0x05DC
+    short_desc: Precise orbit and clock correction
+    desc: |
+      The precise orbit and clock correction message is
+      to be applied as a delta correction to broadcast
+      ephemeris and is typically an equivalent to the 1060
+      and 1066 RTCM message types
+    fields:
+        - time:
+            type: GPSTimeSec
+            desc: GNSS reference time of the correction
+        - sid:
+            type: GnssSignal
+            desc: GNSS signal identifier (16 bit)
+        - update_interval:
+            type: u8
+            desc: |
+                Update interval between consecutive corrections. Encoded
+                following RTCM DF391 specification.
+        - iod_ssr:
+            type: u8
+            desc: |
+                IOD of the SSR correction. A change of Issue Of Data
+                SSR is used to indicate a change in the SSR
+                generating configuration
+        - iod:
+            type: u8
+            desc: Issue of broadcast ephemeris data
+        - radial:
+            type: s32
+            units: 0.1 mm
+            desc: Orbit radial delta correction
+        - along:
+            type: s32
+            units: 0.4 mm
+            desc: Orbit along delta correction
+        - cross:
+            type: s32
+            units: 0.4 mm
+            desc: Orbit along delta correction
+        - dot_radial:
+            type: s32
+            units: 0.001 mm/s
+            desc: Velocity of orbit radial delta correction
+        - dot_along:
+            type: s32
+            units: 0.004 mm/s
+            desc: Velocity of orbit along delta correction
+        - dot_cross:
+            type: s32
+            units: 0.004 mm/s
+            desc: Velocity of orbit cross delta correction
+        - c0:
+            type: s32
+            units: 0.1 mm
+            desc: C0 polynomial coefficient for correction of broadcast satellite clock
+        - c1:
+            type: s32
+            units: 0.001 mm/s
+            desc: C1 polynomial coefficient for correction of broadcast satellite clock
+        - c2:
+            type: s32
+            units: 0.00002 mm/s^-2
+            desc: C2 polynomial coefficient for correction of broadcast satellite clock
+
+ - MSG_SSR_CODE_BIASES:
+    id: 0x05E1
+    short_desc: Precise code biases correction
+    desc: |
+      The precise code biases message is to be added
+      to the pseudorange of the corresponding signal
+      to get corrected pseudorange. It is typically
+      an equivalent to the 1059 and 1065 RTCM message types
+    fields:
+        - time:
+            type: GPSTimeSec
+            desc: GNSS reference time of the correction
+        - sid:
+            type: GnssSignal
+            desc: GNSS signal identifier (16 bit)
+        - update_interval:
+            type: u8
+            desc: |
+                Update interval between consecutive corrections. Encoded
+                following RTCM DF391 specification.
+        - iod_ssr:
+            type: u8
+            desc: |
+                IOD of the SSR correction. A change of Issue Of Data
+                SSR is used to indicate a change in the SSR
+                generating configuration
+        - biases:
+            type: array
+            fill: CodeBiasesContent
+            map_by: code
+            desc: Code biases for the different satellite signals
+
+ - MSG_SSR_PHASE_BIASES:
+    id: 0x05E6
+    short_desc: Precise phase biases correction
+    desc: |
+      The precise phase biases message contains the biases
+      to be added to the carrier phase of the corresponding
+      signal to get corrected carrier phase measurement, as
+      well as the satellite yaw angle to be applied to compute
+      the phase wind-up correction.
+      It is typically an equivalent to the 1265 RTCM message types
+    fields:
+        - time:
+            type: GPSTimeSec
+            desc: GNSS reference time of the correction
+        - sid:
+            type: GnssSignal
+            desc: GNSS signal identifier (16 bit)
+        - update_interval:
+            type: u8
+            desc: |
+                Update interval between consecutive corrections. Encoded
+                following RTCM DF391 specification.
+        - iod_ssr:
+            type: u8
+            desc: |
+                IOD of the SSR correction. A change of Issue Of Data
+                SSR is used to indicate a change in the SSR
+                generating configuration
+        - dispersive_bias:
+            type: u8
+            desc: |
+                Indicator for the dispersive phase biases property.
+        - mw_consistency:
+            type: u8
+            desc: |
+                Consistency indicator for Melbourne-Wubbena linear combinations
+        - yaw:
+            type: u16
+            units: 1 / 256 semi-circle
+            desc: Satellite yaw angle
+        - yaw_rate:
+            type: s8
+            units: 1 / 8192 semi-circle / s
+            desc: Satellite yaw angle rate
+        - biases:
+            type: array
+            fill: PhaseBiasesContent
+            map_by: code
+            desc: |
+              Phase biases corrections for a
+              satellite being tracked.
+
+ - MSG_SSR_STEC_CORRECTION:
+    id: 0x05EB
+    short_desc: Slant Total Electron Content
+    desc: |
+      The STEC per space vehicle, given as polynomial approximation for
+      a given grid.  This should be combined with MSG_SSR_GRIDDED_CORRECTION
+      message to get the state space representation of the atmospheric
+      delay. It is typically equivalent to the QZSS CLAS Sub Type 8 messages
+    fields:
+        - header:
+            type: STECHeader
+            desc: Header of a STEC message
+        - stec_sat_list:
+            type: array
+            fill: STECSatElement
+            desc: Array of STEC information for each space vehicle
+
+ - MSG_SSR_GRIDDED_CORRECTION_NO_STD:
+    id: 0x05F0
+    short_desc: Gridded troposphere and STEC residuals
+    desc: |
+      This message was deprecated when variances (stddev)
+      were added.
+    fields:
+        - header:
+            type: GriddedCorrectionHeader
+            desc: Header of a Gridded Correction message
+        - element:
+            type: GridElementNoStd
+            desc: Tropo and STEC residuals for the given grid point
+
+ - MSG_SSR_GRIDDED_CORRECTION:
+    id: 0x05FA
+    short_desc: Gridded troposphere and STEC residuals
+    desc: |
+      STEC residuals are per space vehicle, tropo is not.
+      It is typically equivalent to the QZSS CLAS Sub Type 9 messages
+    fields:
+        - header:
+            type: GriddedCorrectionHeader
+            desc: Header of a Gridded Correction message
+        - element:
+            type: GridElement
+            desc: |
+              Tropo and STEC residuals for the given grid point (mean
+              and standard deviation)
+
+ - MSG_SSR_GRID_DEFINITION:
+    id: 0x05F5
+    short_desc: Definition of the grid for STEC and tropo messages
+    desc: |
+      Based on the 3GPP proposal R2-1906781 which is in turn based on
+      OMA-LPPe-ValidityArea from OMA-TS-LPPe-V2_0-20141202-C
+    fields:
+        - header:
+            type: GridDefinitionHeader
+            desc: Header of a Gridded Correction message
+        - rle_list:
+            type: array
+            fill: u8
+            desc: |
+              Run Length Encode list of quadrants that contain valid data.
+              The spec describes the encoding scheme in detail, but
+              essentially the index of the quadrants that contain transitions between
+              valid and invalid (and vice versa) are encoded as u8 integers.
