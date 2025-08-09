@@ -5,8 +5,12 @@
 #include <libsbp/sbp.h>
 #include <libsbp/system.h>
 #include <libsbp/navigation.h>
+#include <libsbp/settings.h>
 #include <string>
 #include <iostream>
+#include <chrono>
+#include <ctime>
+#include <thread>
 
 namespace piksi {
 
@@ -22,9 +26,14 @@ struct PiksiData {
     u8 hr, min, sec;                 // UTC time
     double ms;                       // UTC milliseconds
     float utc;                       // UTC time in hours (hr + min/60 + sec/3600)
+    double utc_timestamp;            // UNIX timestamp from UTC (seconds since epoch)
     int sats;                        // Number of satellites
     int status;                      // GPS status
     bool rtk_solution;               // RTK solution availability
+    double frequency;                // Update frequency (Hz)
+    double base_lat, base_lon, base_h; // Base station LLH
+    double base_ecef_x, base_ecef_y, base_ecef_z; // Base station ECEF
+    float S_base_ecef;               // Base station ECEF accuracy (m)
 };
 
 class PiksiMultiGPS {
@@ -33,10 +42,12 @@ public:
     ~PiksiMultiGPS();
 
     void open();
+    void configure();
     void init_loop();
     void loop();
     void close();
     const PiksiData& get_data() const { return data_; }
+    bool is_running() const { return running_; }
 
 private:
     std::string port_;
@@ -47,10 +58,14 @@ private:
     PiksiData data_;
     static int loop_count_;
     static bool flag_start_;
+    std::chrono::time_point<std::chrono::high_resolution_clock> last_update_;
+    bool running_;
+    bool settings_configured_;
 
     void setup_port(int baud);
-    // Use a global port pointer and no context in the signature
     static s32 piksi_port_read(u8 *buff, u32 n, void *context);
+    static s32 piksi_port_write(u8 *buff, u32 n, void *context);
+    static void settings_read_resp_callback(u16 sender_id, u8 len, u8 msg[], void *context);
 
     // Callback functions for SBP messages
     static void heartbeat_callback_0(u16 sender_id, u8 len, u8 msg[], void *context);
@@ -60,6 +75,8 @@ private:
     static void pos_ecef_callback(u16 sender_id, u8 len, u8 msg[], void *context);
     static void vel_ned_callback(u16 sender_id, u8 len, u8 msg[], void *context);
     static void gps_time_callback(u16 sender_id, u8 len, u8 msg[], void *context);
+    static void base_pos_llh_callback(u16 sender_id, u8 len, u8 msg[], void *context);
+    static void base_pos_ecef_callback(u16 sender_id, u8 len, u8 msg[], void *context);
 };
 
 } // namespace piksi

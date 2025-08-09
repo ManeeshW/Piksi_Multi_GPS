@@ -1,6 +1,10 @@
 #include "piksi_multi_gps.hpp"
 #include <thread>
 #include <iostream>
+#include <ctime>
+#include <cstdlib> // for setenv
+#include <iomanip>
+#include <sstream>
 
 namespace piksi {
 
@@ -19,6 +23,9 @@ static sbp_msg_callbacks_node_t heartbeat_node;
 PiksiMultiGPS::PiksiMultiGPS(const std::string& port, int baud_rate)
     : port_(port), baud_rate_(baud_rate), serial_port_name_(nullptr) { // Removed piksi_port_(nullptr)
     data_.rtk_solution = false;
+    data_.frequency = 0.0;
+    data_.utc_timestamp = -1.0;
+    last_update_ = std::chrono::high_resolution_clock::time_point{};
 }
 
 PiksiMultiGPS::~PiksiMultiGPS() {
@@ -40,14 +47,33 @@ void PiksiMultiGPS::open() {
         exit(EXIT_FAILURE);
     }
 
-    result = sp_open(piksi_port, SP_MODE_READ);
+    result = sp_open(piksi_port, SP_MODE_READ_WRITE);
     if (result != SP_OK) {
-        std::cerr << "GPS: Cannot open " << serial_port_name_ << " for reading!" << std::endl;
+        std::cerr << "GPS: Cannot open " << serial_port_name_ << " for reading/writing!" << std::endl;
         exit(EXIT_FAILURE);
     }
     std::cout << "GPS: Port is open" << std::endl;
 
     setup_port(baud_rate_);
+}
+
+void PiksiMultiGPS::configure() {
+    std::cout << "GPS: Configuring solution frequency to 10 Hz..." << std::endl;
+
+    char setting[] = "solution\0soln_freq\0";
+    char value_str[] = "10\0";
+
+    u8 payload[sizeof(setting) + sizeof(value_str)];
+    memcpy(payload, setting, sizeof(setting));
+    memcpy(payload + sizeof(setting), value_str, sizeof(value_str));
+    u8 len = sizeof(setting) + sizeof(value_str);
+
+    s8 ret = sbp_send_message(&s_, SBP_MSG_SETTINGS_WRITE, 0, len, payload, &piksi_port_write);
+    if (ret != SBP_OK) {
+        std::cerr << "GPS: Failed to send settings write message: " << static_cast<int>(ret) << std::endl;
+    } else {
+        std::cout << "GPS: Configuration sent successfully." << std::endl;
+    }
 }
 
 void PiksiMultiGPS::setup_port(int baud) {
@@ -108,10 +134,13 @@ void PiksiMultiGPS::init_loop() {
 }
 
 void PiksiMultiGPS::loop() {
-    int ret = sbp_process(&s_, &piksi_port_read);
-    if (ret < 0) {
-        std::cout << "GPS: sbp_process error: " << ret << std::endl;
-    }
+    int ret;
+    do {
+        ret = sbp_process(&s_, &piksi_port_read);
+        if (ret < 0) {
+            std::cout << "GPS: sbp_process error: " << ret << std::endl;
+        }
+    } while (ret > 0);
 }
 
 void PiksiMultiGPS::close() {
@@ -130,11 +159,18 @@ void PiksiMultiGPS::close() {
 s32 PiksiMultiGPS::piksi_port_read(u8 *buff, u32 n, void *context) {
     (void)context;
     s32 result;
-    // Use a non-blocking read to process whatever data is available.
-    // The flight code uses a 0 timeout.
     result = sp_blocking_read(piksi_port, buff, n, 0);
     if (result < 0) {
         return SBP_READ_ERROR;
+    }
+    return static_cast<s32>(result);
+}
+
+s32 PiksiMultiGPS::piksi_port_write(u8 *buff, u32 n, void *context) {
+    (void)context;
+    s32 result = sp_blocking_write(piksi_port, buff, n, 1000);
+    if (result < 0) {
+        return SBP_WRITE_ERROR;
     }
     return static_cast<s32>(result);
 }
@@ -186,6 +222,69 @@ void PiksiMultiGPS::pos_llh_callback(u16 sender_id, u8 len, u8 msg[], void *cont
     if (!gps->data_.rtk_solution) {
         gps->data_.status = static_cast<int>(pos_llh.flags);
     }
+
+    // Calculate frequency based on pos_llh updates (main position message)
+    auto now = std::chrono::high_resolution_clock::now();
+    if (gps->last_update_.time_since_epoch().count() != 0) {
+        std::chrono::duration<double> diff = now - gps->last_update_;
+        double dt = diff.count();
+        if (dt > 0.0) {
+            gps->data_.frequency = 1.0 / dt;
+        }
+    }
+    gps->last_update_ = now;
+
+    // Printing logic moved here to print at update rate
+    static double last_utc_timestamp = -1.0;
+    if (gps->data_.utc_timestamp == last_utc_timestamp) {
+        return; // Skip print if no new data
+    }
+    last_utc_timestamp = gps->data_.utc_timestamp;
+
+    // Determine status string and color based on fix mode (lower 3 bits of status)
+    std::string status_str;
+    std::string color;
+    int fix_mode = gps->data_.status & 0x07;
+    switch (fix_mode) {
+        case 1: status_str = "SPP"; color = "\033[31m"; break; // Red
+        case 6: status_str = "SBAS"; color = "\033[35m"; break; // Purple
+        case 2: status_str = "DGPS"; color = "\033[36m"; break; // Cyan
+        case 3: status_str = "RTK Float"; color = "\033[34m"; break; // Blue
+        case 4: status_str = "RTK Fixed"; color = "\033[32m"; break; // Green
+        case 5: status_str = "DR"; color = "\033[37m"; break; // White
+        default: status_str = "Unknown/Invalid"; color = "\033[31m"; break; // Red for invalid
+    }
+
+    // Calculate latency
+    std::string latency_str;
+    if (gps->data_.utc_timestamp >= 0.0) {
+        double now_time = static_cast<double>(std::time(nullptr));
+        double latency = now_time - gps->data_.utc_timestamp;
+        std::ostringstream oss;
+        oss << std::setprecision(3) << latency << " seconds";
+        latency_str = oss.str();
+    } else {
+        latency_str = "N/A";
+    }
+
+    std::cout << "\n=== GPS Data ===" << std::endl;
+    std::cout << "UTC Time: " << std::setprecision(2) << gps->data_.utc << " (" 
+              << static_cast<int>(gps->data_.hr) << ":" 
+              << static_cast<int>(gps->data_.min) << ":" 
+              << static_cast<int>(gps->data_.sec) << "." << gps->data_.ms << ")" << std::endl;
+    std::cout << "LLH: Lat=" << std::setprecision(9) << gps->data_.lat << " deg, Lon=" << gps->data_.lon 
+              << " deg, Height=" << gps->data_.h << " m" << std::endl;
+    std::cout << "LLH Accuracy: Horizontal=" << gps->data_.S_llh_h << " m, Vertical=" << gps->data_.S_llh_v << " m" << std::endl;
+    std::cout << "ECEF: X=" << gps->data_.ecef_x << " m, Y=" << gps->data_.ecef_y << " m, Z=" << gps->data_.ecef_z << " m" << std::endl;
+    std::cout << "ECEF Accuracy: " << gps->data_.S_ecef << " m" << std::endl;
+    std::cout << "Baseline NED: N=" << gps->data_.n << " m, E=" << gps->data_.e << " m, D=" << gps->data_.d << " m" << std::endl;
+    std::cout << "RTK Accuracy: Horizontal=" << gps->data_.S_rtk_x_h << " m, Vertical=" << gps->data_.S_rtk_x_v << " m" << std::endl;
+    std::cout << "Velocity NED: N=" << gps->data_.v_n << " m/s, E=" << gps->data_.v_e << " m/s, D=" << gps->data_.v_d << " m/s" << std::endl;
+    std::cout << "Velocity Accuracy: Horizontal=" << gps->data_.S_rtk_v_h << " m/s, Vertical=" << gps->data_.S_rtk_v_v << " m/s" << std::endl;
+    std::cout << "Satellites: " << gps->data_.sats << std::endl;
+    std::cout << color << "Status: " << status_str << (gps->data_.rtk_solution ? " (RTK Solution)" : "") << "\033[0m" << std::endl;
+    std::cout << "Update Frequency: " << std::setprecision(2) << gps->data_.frequency << " Hz" << std::endl;
+    std::cout << "Data Transmission Latency: " << latency_str << std::endl;
 }
 
 void PiksiMultiGPS::pos_ecef_callback(u16 sender_id, u8 len, u8 msg[], void *context) {
@@ -213,11 +312,35 @@ void PiksiMultiGPS::gps_time_callback(u16 sender_id, u8 len, u8 msg[], void *con
     (void)sender_id, (void)len, (void)context;
     msg_utc_time_t gps_time = *(msg_utc_time_t *)msg;
     PiksiMultiGPS* gps = static_cast<PiksiMultiGPS*>(context);
+
+    if ((gps_time.flags & 0x08) == 0) { // UTC invalid
+        return; // Don't update if invalid
+    }
+
     gps->data_.hr = gps_time.hours;
     gps->data_.min = gps_time.minutes;
     gps->data_.sec = gps_time.seconds;
     gps->data_.ms = gps_time.ns / 1.0e6;
     gps->data_.utc = gps->data_.hr + gps->data_.min / 60.0 + (gps->data_.sec + gps->data_.ms / 1000.0) / 3600.0;
+
+    // Calculate UNIX timestamp from UTC for latency
+    setenv("TZ", "UTC", 1);
+    tzset();
+
+    std::tm time_in = {};
+    time_in.tm_year = gps_time.year - 1900;
+    time_in.tm_mon = gps_time.month - 1;
+    time_in.tm_mday = gps_time.day;
+    time_in.tm_hour = gps_time.hours;
+    time_in.tm_min = gps_time.minutes;
+    time_in.tm_sec = gps_time.seconds;
+    time_in.tm_isdst = -1;
+    time_t utc_t = mktime(&time_in);
+    if (utc_t != -1) {
+        gps->data_.utc_timestamp = static_cast<double>(utc_t) + gps_time.ns / 1e9;
+    } else {
+        gps->data_.utc_timestamp = -1.0;
+    }
 }
 
 } // namespace piksi
