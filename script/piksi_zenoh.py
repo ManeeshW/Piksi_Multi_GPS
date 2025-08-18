@@ -4,6 +4,7 @@ import sys
 import argparse
 import os
 import csv
+from datetime import datetime
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Zenoh GPS Data Subscriber")
@@ -26,7 +27,9 @@ def listener(sample):
         print(data)
 
         if args.save_csv:
-            file = 'gps_data.csv'
+            # Generate filename with current date and time
+            current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            file = f"{current_time}_gps_data.csv"
             columns = ['utc_timestamp', 'utc', 'hr', 'min', 'sec', 'ms', 'frequency', 'rtk_solution', 'status', 'lat', 'lon', 'h', 'S_llh_h', 'S_llh_v', 'ecef_x', 'ecef_y', 'ecef_z', 'S_ecef', 'n', 'e', 'd', 'S_rtk_x_h', 'S_rtk_x_v', 'v_n', 'v_e', 'v_d', 'S_rtk_v_h', 'S_rtk_v_v', 'sats']
             row = [data.get(col, '') for col in columns]
             file_exists = os.path.exists(file) and os.path.getsize(file) > 0

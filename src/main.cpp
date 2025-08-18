@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <sstream>
 #include <fstream>
+#include <ctime>
 
 // Function to print GPS data, extracted from the callback
 void print_gps_data(const piksi::PiksiMultiGPS& gps) {
@@ -59,7 +60,12 @@ void print_gps_data(const piksi::PiksiMultiGPS& gps) {
 int main() {
     piksi::PiksiMultiGPS gps("../config.cfg");
 
-    std::ofstream csv_file("gps_data.csv");
+    std::time_t now = std::time(nullptr);
+    std::tm* local_time = std::localtime(&now);
+    std::ostringstream filename;
+    filename << std::put_time(local_time, "%Y-%m-%d_%H-%M-%S") << "_gps_data.csv";
+
+    std::ofstream csv_file(filename.str());
     if (!csv_file.is_open()) {
         std::cerr << "Failed to open gps_data.csv for logging!" << std::endl;
         return 1;
