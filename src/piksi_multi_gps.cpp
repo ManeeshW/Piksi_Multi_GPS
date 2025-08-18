@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <sstream>
 #include <fstream>
+#include <cstring>
 
 namespace piksi {
 
