@@ -95,6 +95,8 @@ void PiksiMultiGPS::read_config(const std::string& config_file_path) {
                     } catch (const std::invalid_argument& ia) {
                         std::cerr << "GPS: Warning - Invalid baud_rate in config. Using default." << std::endl;
                     }
+                } else if (key == "log_to_csv") {
+                    log_to_csv_ = (value == "true");
                 }
             }
         }

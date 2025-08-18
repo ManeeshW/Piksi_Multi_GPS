@@ -52,6 +52,7 @@ public:
         has_new_data_ = false; // Reset the flag after checking
         return temp;
     }
+    bool get_log_to_csv() const { return log_to_csv_; }
 
 private:
     std::string port_;
@@ -66,6 +67,7 @@ private:
     bool has_new_data_ = false;
     std::optional<Session> session_;
     std::optional<Publisher> pub_;
+    bool log_to_csv_ = true;
 
     void setup_port(int baud);
     void read_config(const std::string& config_file_path);
