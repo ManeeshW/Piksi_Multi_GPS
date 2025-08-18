@@ -4,6 +4,7 @@
 #include <thread>
 #include <iomanip>
 #include <sstream>
+#include <fstream>
 
 // Function to print GPS data, extracted from the callback
 void print_gps_data(const piksi::PiksiMultiGPS& gps) {
@@ -58,6 +59,13 @@ void print_gps_data(const piksi::PiksiMultiGPS& gps) {
 int main() {
     piksi::PiksiMultiGPS gps("../config.cfg");
 
+    std::ofstream csv_file("gps_data.csv");
+    if (!csv_file.is_open()) {
+        std::cerr << "Failed to open gps_data.csv for logging!" << std::endl;
+        return 1;
+    }
+    bool header_written = false;
+
     std::cout << "GPS: Initializing..." << std::endl;
     gps.open();
     gps.configure();
@@ -65,12 +73,48 @@ int main() {
 
     while (true) {
         gps.loop();
-        // Check if there is new data to print
+        // Check if there is new data to print and log
         if (gps.has_new_data()) {
+            const piksi::PiksiData& data = gps.get_data();
+            if (!header_written) {
+                csv_file << "UTC_timestamp,UTC,HR,MIN,SEC,MS,Frequency,RTK_solution,Status,Lat,Lon,Height,S_llh_h,S_llh_v,ECEF_x,ECEF_y,ECEF_z,S_ecef,Baseline_n,Baseline_e,Baseline_d,S_rtk_x_h,S_rtk_x_v,Vel_n,Vel_e,Vel_d,S_rtk_v_h,S_rtk_v_v,Sats\n";
+                header_written = true;
+            }
+            csv_file << std::setprecision(15) << data.utc_timestamp << ","
+                     << data.utc << ","
+                     << static_cast<int>(data.hr) << ","
+                     << static_cast<int>(data.min) << ","
+                     << static_cast<int>(data.sec) << ","
+                     << data.ms << ","
+                     << data.frequency << ","
+                     << data.rtk_solution << ","
+                     << data.status << ","
+                     << data.lat << ","
+                     << data.lon << ","
+                     << data.h << ","
+                     << data.S_llh_h << ","
+                     << data.S_llh_v << ","
+                     << data.ecef_x << ","
+                     << data.ecef_y << ","
+                     << data.ecef_z << ","
+                     << data.S_ecef << ","
+                     << data.n << ","
+                     << data.e << ","
+                     << data.d << ","
+                     << data.S_rtk_x_h << ","
+                     << data.S_rtk_x_v << ","
+                     << data.v_n << ","
+                     << data.v_e << ","
+                     << data.v_d << ","
+                     << data.S_rtk_v_h << ","
+                     << data.S_rtk_v_v << ","
+                     << data.sats << "\n";
+            csv_file.flush();
             print_gps_data(gps);
         }
     }
 
+    csv_file.close();
     gps.close();
     return 0;
 }

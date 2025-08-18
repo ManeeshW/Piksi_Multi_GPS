@@ -10,6 +10,10 @@
 #include <iostream>
 #include <chrono>
 #include <ctime>
+#include <zenoh.hxx>
+#include <optional>
+
+using namespace zenoh;
 
 namespace piksi {
 
@@ -60,6 +64,8 @@ private:
     static bool flag_start_;
     std::chrono::time_point<std::chrono::high_resolution_clock> last_update_;
     bool has_new_data_ = false;
+    std::optional<Session> session_;
+    std::optional<Publisher> pub_;
 
     void setup_port(int baud);
     void read_config(const std::string& config_file_path);

@@ -7,6 +7,9 @@
 #include <sstream>
 #include <fstream>
 #include <cstring>
+#include <zenoh.hxx>
+
+using namespace zenoh;
 
 namespace piksi {
 
@@ -34,6 +37,14 @@ PiksiMultiGPS::PiksiMultiGPS(const std::string& config_file_path)
     data_.frequency = 0.0;
     data_.utc_timestamp = -1.0;
     last_update_ = std::chrono::high_resolution_clock::time_point{};
+
+    // Initialize Zenoh session for UDP publishing
+    Config zenoh_config = Config::create_default();
+    zenoh_config.insert_json5("mode", "\"peer\"");
+    zenoh_config.insert_json5("listen/endpoints", "[\"udp/0.0.0.0:7447\"]");
+    session_ = Session::open(std::move(zenoh_config));
+    pub_ = session_->declare_publisher("fdcl/piksi");
+    std::cout << "Zenoh: Initialized publisher on key 'fdcl/piksi' via UDP." << std::endl;
 }
 
 PiksiMultiGPS::~PiksiMultiGPS() {
@@ -294,6 +305,42 @@ void PiksiMultiGPS::pos_llh_callback(u16 sender_id, u8 len, u8 msg[], void *cont
     
     // Set the flag to indicate new data is available
     gps->has_new_data_ = true;
+
+    // Publish data via Zenoh as JSON
+    std::ostringstream json;
+    json << std::setprecision(15) << std::boolalpha;
+    json << "{"
+         << "\"utc_timestamp\":" << gps->data_.utc_timestamp << ","
+         << "\"utc\":" << gps->data_.utc << ","
+         << "\"hr\":" << static_cast<int>(gps->data_.hr) << ","
+         << "\"min\":" << static_cast<int>(gps->data_.min) << ","
+         << "\"sec\":" << static_cast<int>(gps->data_.sec) << ","
+         << "\"ms\":" << gps->data_.ms << ","
+         << "\"frequency\":" << gps->data_.frequency << ","
+         << "\"rtk_solution\":" << gps->data_.rtk_solution << ","
+         << "\"status\":" << gps->data_.status << ","
+         << "\"lat\":" << gps->data_.lat << ","
+         << "\"lon\":" << gps->data_.lon << ","
+         << "\"h\":" << gps->data_.h << ","
+         << "\"S_llh_h\":" << gps->data_.S_llh_h << ","
+         << "\"S_llh_v\":" << gps->data_.S_llh_v << ","
+         << "\"ecef_x\":" << gps->data_.ecef_x << ","
+         << "\"ecef_y\":" << gps->data_.ecef_y << ","
+         << "\"ecef_z\":" << gps->data_.ecef_z << ","
+         << "\"S_ecef\":" << gps->data_.S_ecef << ","
+         << "\"n\":" << gps->data_.n << ","
+         << "\"e\":" << gps->data_.e << ","
+         << "\"d\":" << gps->data_.d << ","
+         << "\"S_rtk_x_h\":" << gps->data_.S_rtk_x_h << ","
+         << "\"S_rtk_x_v\":" << gps->data_.S_rtk_x_v << ","
+         << "\"v_n\":" << gps->data_.v_n << ","
+         << "\"v_e\":" << gps->data_.v_e << ","
+         << "\"v_d\":" << gps->data_.v_d << ","
+         << "\"S_rtk_v_h\":" << gps->data_.S_rtk_v_h << ","
+         << "\"S_rtk_v_v\":" << gps->data_.S_rtk_v_v << ","
+         << "\"sats\":" << gps->data_.sats
+         << "}";
+    gps->pub_->put(json.str());
 }
 
 void PiksiMultiGPS::pos_ecef_callback(u16 sender_id, u8 len, u8 msg[], void *context) {
