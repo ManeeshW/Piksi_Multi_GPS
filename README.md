@@ -68,3 +68,28 @@ The program outputs:
 - Ensure the Piksi Multi GPS is properly connected and configured.
 - The application assumes `libsbp` is installed in `/usr/local/lib` and `/usr/local/include`.
 - Press `Ctrl+C` to stop the program, which will close the serial port cleanly.
+
+
+## Piksi tools
+
+Example:
+    to interactively read one setting:
+
+        $ python -m piksi_tools.settings  -p /dev/ttyUSB0 read system_info firmware_version
+
+    to interactively read all settings:
+
+        $ python -m piksi_tools.settings  -p /dev/ttyUSB0 all
+
+    to  read all settings to an .ini file:
+
+        $ python -m piksi_tools.settings  -p /dev/ttyUSB0 read_to_file config.ini
+
+    to  write all settings from an .ini file and save to the device:
+
+        $ python -m piksi_tools.settings  -p /dev/ttyUSB0 -s write_from_file config.ini
+
+        conda activate piksi_tools
+        cd piksi_tools/piksi_tools/
+        python -m piksi_tools.settings  -p /dev/ttyUSB0 -s write_from_file rover_config_sim.ini
+        python -m piksi_tools.settings  -p /dev/ttyUSB0 -s write_from_file rover_config.ini
