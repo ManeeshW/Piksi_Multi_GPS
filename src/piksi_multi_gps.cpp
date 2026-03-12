@@ -39,9 +39,19 @@ PiksiMultiGPS::PiksiMultiGPS(const std::string& config_file_path)
     last_update_ = std::chrono::high_resolution_clock::time_point{};
 
     // Initialize Zenoh session for UDP publishing
+    //Config zenoh_config = Config::create_default();
+    //zenoh_config.insert_json5("mode", "\"peer\"");
+    //zenoh_config.insert_json5("listen/endpoints", "[\"udp/0.0.0.0:7447\"]");
+    // Initialize Zenoh session for UDP publishing
+    // Config zenoh_config = Config::create_default();
+    // zenoh_config.insert_json5("mode", "\"peer\"");
+    // zenoh_config.insert_json5("listen/endpoints", "[\"udp/0.0.0.0:7447\"]");
+    // session_ = Session::open(std::move(zenoh_config));
+
     Config zenoh_config = Config::create_default();
     zenoh_config.insert_json5("mode", "\"peer\"");
-    zenoh_config.insert_json5("listen/endpoints", "[\"udp/0.0.0.0:7447\"]");
+    //zenoh_config.insert_json5("connect/endpoints", "[\"udp/<SUBSCRIBER_IP>:7447\"]");  // Replace <SUBSCRIBER_IP> with the Python device's IP
+    zenoh_config.insert_json5("scouting/multicast/enabled", "true");  // Disable multicast scouting
     session_ = Session::open(std::move(zenoh_config));
     pub_ = session_->declare_publisher("fdcl/piksi");
     std::cout << "Zenoh: Initialized publisher on key 'fdcl/piksi' via UDP." << std::endl;
