@@ -12,6 +12,8 @@
 #include <ctime>
 #include <zenoh.hxx>
 #include <optional>
+#include <Eigen/Dense>
+#include <nlohmann/json.hpp>
 
 using namespace zenoh;
 
@@ -28,8 +30,8 @@ struct PiksiData {
     float S_rtk_v_h, S_rtk_v_v;      // Velocity horizontal/vertical accuracy (m/s)
     u8 hr, min, sec;                 // UTC time
     double ms;                       // UTC milliseconds
-    float utc;                       // UTC time in hours (hr + min/60 + sec/3600)
-    double utc_timestamp;            // UNIX timestamp from UTC (seconds since epoch)
+    float utc;                       // UTC time in hours
+    double utc_timestamp;            // UNIX timestamp from UTC
     int sats;                        // Number of satellites
     int status;                      // GPS status
     bool rtk_solution;               // RTK solution availability
@@ -49,7 +51,7 @@ public:
     const PiksiData& get_data() const { return data_; }
     bool has_new_data() {
         bool temp = has_new_data_;
-        has_new_data_ = false; // Reset the flag after checking
+        has_new_data_ = false;
         return temp;
     }
     bool get_log_to_csv() const { return log_to_csv_; }
@@ -66,15 +68,21 @@ private:
     std::chrono::time_point<std::chrono::high_resolution_clock> last_update_;
     bool has_new_data_ = false;
     std::optional<Session> session_;
-    std::optional<Publisher> pub_;
     bool log_to_csv_ = true;
+
+    // === NEW: vicon2pose-compatible publishing ===
+    bool publish_pose_sync_ = true;
+    std::string pose_sync_key_ = "fdcl/pose_sync";
+    std::optional<Publisher> pose_sync_publisher_;
+    Eigen::Matrix3d R_ned_to_new_ = Eigen::Matrix3d::Identity();
 
     void setup_port(int baud);
     void read_config(const std::string& config_file_path);
+    void publish_to_pose_sync();   // publishes identical JSON as vicon2pose
+
     static s32 piksi_port_read(u8 *buff, u32 n, void *context);
     static s32 piksi_port_write(u8 *buff, u32 n, void *context);
 
-    // Callback functions for SBP messages
     static void heartbeat_callback_0(u16 sender_id, u8 len, u8 msg[], void *context);
     static void heartbeat_callback(u16 sender_id, u8 len, u8 msg[], void *context);
     static void baseline_callback(u16 sender_id, u8 len, u8 msg[], void *context);

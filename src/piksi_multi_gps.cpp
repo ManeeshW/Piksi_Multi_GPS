@@ -8,8 +8,11 @@
 #include <fstream>
 #include <cstring>
 #include <zenoh.hxx>
+#include <Eigen/Dense>
+#include <nlohmann/json.hpp>
 
 using namespace zenoh;
+using json = nlohmann::json;
 
 namespace piksi {
 
@@ -38,23 +41,17 @@ PiksiMultiGPS::PiksiMultiGPS(const std::string& config_file_path)
     data_.utc_timestamp = -1.0;
     last_update_ = std::chrono::high_resolution_clock::time_point{};
 
-    // Initialize Zenoh session for UDP publishing
-    //Config zenoh_config = Config::create_default();
-    //zenoh_config.insert_json5("mode", "\"peer\"");
-    //zenoh_config.insert_json5("listen/endpoints", "[\"udp/0.0.0.0:7447\"]");
-    // Initialize Zenoh session for UDP publishing
-    // Config zenoh_config = Config::create_default();
-    // zenoh_config.insert_json5("mode", "\"peer\"");
-    // zenoh_config.insert_json5("listen/endpoints", "[\"udp/0.0.0.0:7447\"]");
-    // session_ = Session::open(std::move(zenoh_config));
-
     Config zenoh_config = Config::create_default();
     zenoh_config.insert_json5("mode", "\"peer\"");
-    //zenoh_config.insert_json5("connect/endpoints", "[\"udp/<SUBSCRIBER_IP>:7447\"]");  // Replace <SUBSCRIBER_IP> with the Python device's IP
-    zenoh_config.insert_json5("scouting/multicast/enabled", "true");  // Disable multicast scouting
+    zenoh_config.insert_json5("scouting/multicast/enabled", "true");
     session_ = Session::open(std::move(zenoh_config));
-    pub_ = session_->declare_publisher("fdcl/piksi");
-    std::cout << "Zenoh: Initialized publisher on key 'fdcl/piksi' via UDP." << std::endl;
+
+    // NEW: vicon2pose-compatible publisher only
+    if (publish_pose_sync_) {
+        pose_sync_publisher_ = session_->declare_publisher(pose_sync_key_);
+        std::cout << "GPS: Pose sync publisher ready on '" << pose_sync_key_ 
+                  << "' (RTK position + fake attitude - same format as vicon2pose)" << std::endl;
+    }
 }
 
 PiksiMultiGPS::~PiksiMultiGPS() {
@@ -71,11 +68,9 @@ void PiksiMultiGPS::read_config(const std::string& config_file_path) {
     std::string line;
     bool in_piksi_section = false;
     while (std::getline(config_file, line)) {
-        // Trim whitespace from the line
         line.erase(0, line.find_first_not_of(" \t"));
         line.erase(line.find_last_not_of(" \t") + 1);
 
-        // Check for section header
         if (line.length() > 0 && line.front() == '[' && line.back() == ']') {
             std::string section = line.substr(1, line.length() - 2);
             in_piksi_section = (section == "Piksi Multi GPS");
@@ -91,7 +86,6 @@ void PiksiMultiGPS::read_config(const std::string& config_file_path) {
         if (std::getline(is_line, key, '=')) {
             std::string value;
             if (std::getline(is_line, value)) {
-                // Trim whitespace from key and value
                 key.erase(0, key.find_first_not_of(" \t"));
                 key.erase(key.find_last_not_of(" \t") + 1);
                 value.erase(0, value.find_first_not_of(" \t"));
@@ -108,10 +102,59 @@ void PiksiMultiGPS::read_config(const std::string& config_file_path) {
                 } else if (key == "log_to_csv") {
                     log_to_csv_ = (value == "true");
                 }
+                // ==================== NEW CONFIG OPTIONS ====================
+                else if (key == "publish_pose_sync") {
+                    publish_pose_sync_ = (value == "true" || value == "1");
+                } else if (key == "pose_sync_key") {
+                    pose_sync_key_ = value;
+                } else if (key == "R_ned_to_new") {
+                    std::istringstream iss(value);
+                    double vals[9] = {1.0,0.0,0.0, 0.0,1.0,0.0, 0.0,0.0,1.0};
+                    for (int i = 0; i < 9 && iss; ++i) iss >> vals[i];
+                    R_ned_to_new_ << vals[0],vals[1],vals[2],
+                                    vals[3],vals[4],vals[5],
+                                    vals[6],vals[7],vals[8];
+                    std::cout << "GPS: Loaded R_ned_to_new:\n" << R_ned_to_new_ << std::endl;
+                }
             }
         }
     }
     config_file.close();
+}
+
+// ====================== Publish exactly like vicon2pose ======================
+void PiksiMultiGPS::publish_to_pose_sync() {
+    if (!pose_sync_publisher_) return;
+
+    auto ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    Eigen::Vector3d pos_ned(data_.n, data_.e, data_.d);
+    Eigen::Vector3d pos_new = R_ned_to_new_ * pos_ned;
+
+    // Fake attitude = -Identity (exactly as in vicon2pose position_only mode)
+    Eigen::Matrix3d R_fake = -Eigen::Matrix3d::Identity();
+
+    json j;
+    j["image_taken_time"] = ts;
+    std::vector<std::vector<double>> pose_data(3, std::vector<double>(4));
+    for (int i = 0; i < 3; ++i) {
+        for (int k = 0; k < 3; ++k) {
+            pose_data[i][k] = R_fake(i, k);
+        }
+        pose_data[i][3] = pos_new(i);
+    }
+    j["pose"] = pose_data;
+    j["noise_x"] = {0.0, 0.0, 0.0};
+    j["noise_angles"] = {0.0, 0.0, 0.0};
+
+    try {
+        pose_sync_publisher_->put(j.dump());
+        std::cout << "GPS-POSE_SYNC: Published | pos=" << pos_new.transpose()
+                  << " | status=" << data_.status << " (RTK only)" << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "GPS-POSE_SYNC: Publish error - " << e.what() << std::endl;
+    }
 }
 
 void PiksiMultiGPS::open() {
@@ -304,7 +347,7 @@ void PiksiMultiGPS::pos_llh_callback(u16 sender_id, u8 len, u8 msg[], void *cont
         gps->data_.status = static_cast<int>(pos_llh.flags);
     }
 
-    // Calculate frequency based on pos_llh updates (main position message)
+    // Calculate frequency
     auto now = std::chrono::high_resolution_clock::now();
     if (gps->last_update_.time_since_epoch().count() != 0) {
         std::chrono::duration<double> diff = now - gps->last_update_;
@@ -315,44 +358,14 @@ void PiksiMultiGPS::pos_llh_callback(u16 sender_id, u8 len, u8 msg[], void *cont
     }
     gps->last_update_ = now;
     
-    // Set the flag to indicate new data is available
     gps->has_new_data_ = true;
 
-    // Publish data via Zenoh as JSON
-    std::ostringstream json;
-    json << std::setprecision(15) << std::boolalpha;
-    json << "{"
-         << "\"utc_timestamp\":" << gps->data_.utc_timestamp << ","
-         << "\"utc\":" << gps->data_.utc << ","
-         << "\"hr\":" << static_cast<int>(gps->data_.hr) << ","
-         << "\"min\":" << static_cast<int>(gps->data_.min) << ","
-         << "\"sec\":" << static_cast<int>(gps->data_.sec) << ","
-         << "\"ms\":" << gps->data_.ms << ","
-         << "\"frequency\":" << gps->data_.frequency << ","
-         << "\"rtk_solution\":" << gps->data_.rtk_solution << ","
-         << "\"status\":" << gps->data_.status << ","
-         << "\"lat\":" << gps->data_.lat << ","
-         << "\"lon\":" << gps->data_.lon << ","
-         << "\"h\":" << gps->data_.h << ","
-         << "\"S_llh_h\":" << gps->data_.S_llh_h << ","
-         << "\"S_llh_v\":" << gps->data_.S_llh_v << ","
-         << "\"ecef_x\":" << gps->data_.ecef_x << ","
-         << "\"ecef_y\":" << gps->data_.ecef_y << ","
-         << "\"ecef_z\":" << gps->data_.ecef_z << ","
-         << "\"S_ecef\":" << gps->data_.S_ecef << ","
-         << "\"n\":" << gps->data_.n << ","
-         << "\"e\":" << gps->data_.e << ","
-         << "\"d\":" << gps->data_.d << ","
-         << "\"S_rtk_x_h\":" << gps->data_.S_rtk_x_h << ","
-         << "\"S_rtk_x_v\":" << gps->data_.S_rtk_x_v << ","
-         << "\"v_n\":" << gps->data_.v_n << ","
-         << "\"v_e\":" << gps->data_.v_e << ","
-         << "\"v_d\":" << gps->data_.v_d << ","
-         << "\"S_rtk_v_h\":" << gps->data_.S_rtk_v_h << ","
-         << "\"S_rtk_v_v\":" << gps->data_.S_rtk_v_v << ","
-         << "\"sats\":" << gps->data_.sats
-         << "}";
-    gps->pub_->put(json.str());
+    // ==================== ONLY PUBLISH WHEN RTK IS GOOD ====================
+    bool is_rtk_good = gps->data_.rtk_solution && (gps->data_.status == 3 || gps->data_.status == 4);
+    if (gps->publish_pose_sync_ && is_rtk_good) {
+        gps->publish_to_pose_sync();
+    }
+    // =============================================================================
 }
 
 void PiksiMultiGPS::pos_ecef_callback(u16 sender_id, u8 len, u8 msg[], void *context) {
@@ -381,9 +394,7 @@ void PiksiMultiGPS::gps_time_callback(u16 sender_id, u8 len, u8 msg[], void *con
     msg_utc_time_t gps_time = *(msg_utc_time_t *)msg;
     PiksiMultiGPS* gps = static_cast<PiksiMultiGPS*>(context);
 
-    if ((gps_time.flags & 0x08) == 0) { // UTC invalid
-        return; // Don't update if invalid
-    }
+    if ((gps_time.flags & 0x08) == 0) return;
 
     gps->data_.hr = gps_time.hours;
     gps->data_.min = gps_time.minutes;
@@ -391,7 +402,6 @@ void PiksiMultiGPS::gps_time_callback(u16 sender_id, u8 len, u8 msg[], void *con
     gps->data_.ms = gps_time.ns / 1.0e6;
     gps->data_.utc = gps->data_.hr + gps->data_.min / 60.0 + (gps->data_.sec + gps->data_.ms / 1000.0) / 3600.0;
 
-    // Calculate UNIX timestamp from UTC for latency
     setenv("TZ", "UTC", 1);
     tzset();
 
