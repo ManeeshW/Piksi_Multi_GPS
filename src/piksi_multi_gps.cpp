@@ -288,8 +288,25 @@ void PiksiMultiGPS::baseline_callback(u16 sender_id, u8 len, u8 msg[], void *con
 
 void PiksiMultiGPS::pos_llh_callback(u16 sender_id, u8 len, u8 msg[], void *context) {
     (void)sender_id, (void)len, (void)context;
+
+    // Stamp system time immediately on arrival
+    auto sys_now = std::chrono::system_clock::now();
+    auto sys_now_t = std::chrono::system_clock::to_time_t(sys_now);
+    long sys_now_us = std::chrono::duration_cast<std::chrono::microseconds>(
+        sys_now.time_since_epoch()).count() % 1000000;
+
     msg_pos_llh_t pos_llh = *(msg_pos_llh_t *)msg;
     PiksiMultiGPS* gps = static_cast<PiksiMultiGPS*>(context);
+
+    gps->data_.system_time_epoch = std::chrono::duration<double>(
+        sys_now.time_since_epoch()).count();
+    std::tm tm_buf = {};
+    gmtime_r(&sys_now_t, &tm_buf);
+    char date_buf[20];
+    std::strftime(date_buf, sizeof(date_buf), "%Y-%m-%dT%H:%M:%S", &tm_buf);
+    std::ostringstream sys_iso;
+    sys_iso << date_buf << "." << std::setfill('0') << std::setw(6) << sys_now_us;
+    gps->data_.system_time_iso = sys_iso.str();
     gps->data_.lat = pos_llh.lat;
     gps->data_.lon = pos_llh.lon;
     gps->data_.h = pos_llh.height;
@@ -322,6 +339,8 @@ void PiksiMultiGPS::pos_llh_callback(u16 sender_id, u8 len, u8 msg[], void *cont
     std::ostringstream json;
     json << std::setprecision(15) << std::boolalpha;
     json << "{"
+         << "\"system_time\":\"" << gps->data_.system_time_iso << "\","
+         << "\"system_time_epoch\":" << gps->data_.system_time_epoch << ","
          << "\"utc_timestamp\":" << gps->data_.utc_timestamp << ","
          << "\"utc\":" << gps->data_.utc << ","
          << "\"hr\":" << static_cast<int>(gps->data_.hr) << ","

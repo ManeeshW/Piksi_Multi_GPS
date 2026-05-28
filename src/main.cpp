@@ -6,6 +6,9 @@
 #include <sstream>
 #include <fstream>
 #include <ctime>
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 // Function to print GPS data, extracted from the callback
 void print_gps_data(const piksi::PiksiMultiGPS& gps) {
@@ -60,16 +63,23 @@ void print_gps_data(const piksi::PiksiMultiGPS& gps) {
 int main() {
     piksi::PiksiMultiGPS gps("../config.cfg");
 
+    const fs::path data_dir = "../data";
+    fs::create_directories(data_dir);
+
     std::time_t now = std::time(nullptr);
-    std::tm* local_time = std::localtime(&now);
+    std::tm tm_utc = {};
+    gmtime_r(&now, &tm_utc);
     std::ostringstream filename;
-    filename << std::put_time(local_time, "%Y-%m-%d_%H-%M-%S") << "_gps_data.csv";
+    filename << (data_dir / "").string()
+             << std::put_time(&tm_utc, "%Y-%m-%d_%H-%M-%S")
+             << "_gps_data.csv";
 
     std::ofstream csv_file(filename.str());
     if (!csv_file.is_open()) {
-        std::cerr << "Failed to open gps_data.csv for logging!" << std::endl;
+        std::cerr << "Failed to open " << filename.str() << " for logging!" << std::endl;
         return 1;
     }
+    std::cout << "GPS: Logging to " << filename.str() << std::endl;
     bool header_written = false;
 
     std::cout << "GPS: Initializing..." << std::endl;
@@ -84,10 +94,12 @@ int main() {
             const piksi::PiksiData& data = gps.get_data();
             if (gps.get_log_to_csv()) {
                 if (!header_written) {
-                    csv_file << "UTC_timestamp,UTC,HR,MIN,SEC,MS,Frequency,RTK_solution,Status,Lat,Lon,Height,S_llh_h,S_llh_v,ECEF_x,ECEF_y,ECEF_z,S_ecef,Baseline_n,Baseline_e,Baseline_d,S_rtk_x_h,S_rtk_x_v,Vel_n,Vel_e,Vel_d,S_rtk_v_h,S_rtk_v_v,Sats\n";
+                    csv_file << "SYSTEM_TIME,SYSTEM_TIME_EPOCH,UTC_TIMESTAMP,UTC,HR,MIN,SEC,MS,FREQUENCY,RTK_SOLUTION,STATUS,LAT,LON,HEIGHT,S_LLH_H,S_LLH_V,ECEF_X,ECEF_Y,ECEF_Z,S_ECEF,BASELINE_N,BASELINE_E,BASELINE_D,S_RTK_X_H,S_RTK_X_V,VEL_N,VEL_E,VEL_D,S_RTK_V_H,S_RTK_V_V,SATS\n";
                     header_written = true;
                 }
-                csv_file << std::setprecision(15) << data.utc_timestamp << ","
+                csv_file << data.system_time_iso << ","
+                         << std::setprecision(15) << data.system_time_epoch << ","
+                         << data.utc_timestamp << ","
                          << data.utc << ","
                          << static_cast<int>(data.hr) << ","
                          << static_cast<int>(data.min) << ","

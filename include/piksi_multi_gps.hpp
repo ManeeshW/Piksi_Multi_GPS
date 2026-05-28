@@ -34,6 +34,8 @@ struct PiksiData {
     int status;                      // GPS status
     bool rtk_solution;               // RTK solution availability
     double frequency;                // Update frequency (Hz)
+    double system_time_epoch;        // Computer system time as UNIX timestamp (seconds since epoch)
+    std::string system_time_iso;     // Computer system time as ISO-8601 string (UTC)
 };
 
 class PiksiMultiGPS {
